@@ -36,6 +36,14 @@ class Program
         int durationInSeconds = int.Parse(args[5]);
         int readResponseBody = int.Parse(args[6]);
         int sliceFactor = int.Parse(args[7]);
+        // string urls = "http://52.140.106.224:80";
+        // string hosts = "india-backend.azurewebsites.net";
+        // int requestsPerSecond = 300;
+        // int maxConnections = 100;
+        // int timeoutInSeconds = 10;
+        // int durationInSeconds = 30;
+        // int readResponseBody = 0;
+        // int sliceFactor = 1;
 
         var urllist = urls.Split(',');
         var hostlist = hosts.Split(',');
@@ -54,6 +62,7 @@ class Program
                 MaxConnectionsPerServer = maxConnections,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(30),
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                UseCookies = false,
             };
         }
         else
@@ -62,6 +71,7 @@ class Program
             {
                 PooledConnectionLifetime = TimeSpan.FromMinutes(30),
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                UseCookies = false,
             };
         }
 
@@ -69,19 +79,19 @@ class Program
 
         Console.WriteLine($"Starting RPS generator with {requestsPerSecond} requests per second for {durationInSeconds} seconds...");
 
-        var tasks = new List<Task>();
+        Task rpsTask = GenerateRequestsAsync(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
         cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(durationInSeconds));
 
         timeTracker.Start();
 
-        for (int i = 0; i < urllist.Length; i++)
-        {
-            tasks.Add(GenerateRequestsAsync(client, urllist[i], hostlist[i], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token));
-        }
+        // for (int i = 0; i < urllist.Length; i++)
+        // {
+        //     rpsTask = GenerateRequestsAsync(client, urllist[i], hostlist[i], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
+        // }
 
         try
         {
-            await Task.WhenAll(tasks);
+            await rpsTask;
         }
         catch (Exception)
         {
@@ -109,18 +119,25 @@ class Program
         {
             stopwatch.Start();
             var requestsInIteration = requestsPerSecond/sliceFactor;
-            var tasks = new Task[requestsInIteration];
             int count = 0;
 
             for (int i = 0; i < requestsInIteration; i++)
             {
-                tasks[i] = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
+                _ = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
                 count += 1;
             }
 
             stopwatch.Stop();
             Console.WriteLine($"Fired {count} requests to host {host} at {url} in {stopwatch.ElapsedMilliseconds} ms");
-            await Task.Delay((int)1000/sliceFactor - (int)stopwatch.ElapsedMilliseconds);
+            int delayTime = (int)1000/sliceFactor - (int)stopwatch.ElapsedMilliseconds;
+            if (delayTime > 0)
+            {
+                await Task.Delay(delayTime).ConfigureAwait(false);;
+            }
+            else
+            {
+                Console.WriteLine("Requests took longer than expected. Skipping delay.");
+            }
             stopwatch.Reset();
         }
 
@@ -135,11 +152,11 @@ class Program
             request.Headers.Host = host;
             if (readResponseBody == 1)
             {
-                using var response = await client.SendAsync(request, cancellationToken);
+                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (TaskCanceledException)
