@@ -12,6 +12,13 @@ class Program
 
     static async Task Main(string[] args)
     {
+        // Set an environment variable for the current process
+        Environment.SetEnvironmentVariable("DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS", "1");
+
+        // Retrieve and print the environment variable to confirm it was set
+        string? value = Environment.GetEnvironmentVariable("DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS");
+        Console.WriteLine($"DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS: {value}");
+
         var cancellationTokenSource = new CancellationTokenSource();
 
         // Register for the Ctrl + C (SIGINT) event
