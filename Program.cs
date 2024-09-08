@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Net.Http;
+using System.Timers;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -86,10 +87,9 @@ class Program
 
         Console.WriteLine($"Starting RPS generator with {requestsPerSecond} requests per second for {durationInSeconds} seconds...");
 
-        Task rpsTask = GenerateRequestsAsync(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
         cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(durationInSeconds));
-
         timeTracker.Start();
+        GenerateTimers(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
 
         // for (int i = 0; i < urllist.Length; i++)
         // {
@@ -98,11 +98,13 @@ class Program
 
         try
         {
-            await rpsTask;
+            // Await till cancellation token is cancelled
+            await Task.Delay(Timeout.Infinite, cancellationTokenSource.Token);
+            Console.WriteLine("Cancellation requested. Stopping...");
         }
         catch (Exception)
         {
-            Console.WriteLine("Stopped!");
+            Console.WriteLine("Stopped on exception!");
         }
         finally
         {
@@ -118,40 +120,18 @@ class Program
         }
     }
 
-    private static async Task GenerateRequestsAsync(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, CancellationToken cancellationToken)
+    private static void GenerateTimers(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, CancellationToken cancellationToken)
     {
-        var stopwatch = new Stopwatch();
-
-        while (!cancellationToken.IsCancellationRequested)
+        for (int i = 0; i < requestsPerSecond; i++)
         {
-            stopwatch.Start();
-            var requestsInIteration = requestsPerSecond/sliceFactor;
-            int count = 0;
+            // Create a random number between 1 and 500
+            int delay = new Random().Next(1, 500);
 
-            for (int i = 0; i < requestsInIteration; i++)
-            {
-                _ = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
-                count += 1;
-            }
-
-            stopwatch.Stop();
-            Console.WriteLine($"Fired {count} requests to host {host} at {url} in {stopwatch.ElapsedMilliseconds} ms");
-            int delayTime = (int)1000/sliceFactor - (int)stopwatch.ElapsedMilliseconds;
-            if (delayTime > 0)
-            {
-                await Task.Delay(delayTime).ConfigureAwait(false);;
-            }
-            else
-            {
-                Console.WriteLine("Requests took longer than expected. Skipping delay.");
-            }
-            stopwatch.Reset();
+            CreateTimer(delay, client, url, host, readResponseBody, cancellationToken);
         }
-
-        throw new OperationCanceledException();
     }
 
-    private static async Task SendRequestAsync(HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
+    private static async Task SendRequestAsync(System.Timers.Timer timer, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
     {
         try
         {
@@ -178,6 +158,8 @@ class Program
         finally
         {
             Interlocked.Increment(ref totalRequestCount);
+            CreateTimer(1000, client, url, host, readResponseBody, cancellationToken);
+            timer.Dispose();
         }
     }
 
@@ -188,5 +170,24 @@ class Program
         Console.WriteLine("For putting no cap on maxConnections, set it to 0.");
         Console.WriteLine("Set readResponseBody as 1 or 0.");
         Console.WriteLine("Keep secondSliceFactor as one, unless you want to divide a second into set number of slices and divide RPS spurts among them.");
+    }
+
+    private static void CreateTimer(int delay, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
+    {
+        // Create a timer with the delay
+        var timer = new System.Timers.Timer(delay);
+
+        // Set the timer to trigger only once
+        timer.AutoReset = false;
+
+        // Attach an event handler to the Elapsed event
+        timer.Elapsed += (sender, e) =>
+        {
+            // Send the request
+            _ = SendRequestAsync(timer, client, url, host, readResponseBody, cancellationToken);
+        };
+
+        // Start the timer
+        timer.Start();
     }
 }
