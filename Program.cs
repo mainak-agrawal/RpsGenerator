@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Net.Http;
-using System.Timers;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,6 +9,11 @@ class Program
     private static long totalRequestCount = 0;
     private static long failedRequestCount = 0;
     private static Stopwatch timeTracker = new Stopwatch();
+    public static string _url = string.Empty;
+    public static string _host = string.Empty;
+    public static int _readResponseBody = 0;
+    public static CancellationToken _cancellationToken { get; set; }
+    public static HttpClient _client = null;
 
     static async Task Main(string[] args)
     {
@@ -83,13 +87,17 @@ class Program
             };
         }
 
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutInSeconds) };
+        _client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutInSeconds) };
+        _url = urllist[0];
+        _host = hostlist[0];
+        _readResponseBody = readResponseBody;
+        _cancellationToken = cancellationTokenSource.Token;
 
         Console.WriteLine($"Starting RPS generator with {requestsPerSecond} requests per second for {durationInSeconds} seconds...");
 
         cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(durationInSeconds));
         timeTracker.Start();
-        GenerateTimers(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
+        GenerateTimers(_client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, _cancellationToken);
 
         // for (int i = 0; i < urllist.Length; i++)
         // {
@@ -127,11 +135,11 @@ class Program
             // Create a random number between 1 and 500
             int delay = new Random().Next(1, 500);
 
-            CreateTimer(delay, client, url, host, readResponseBody, cancellationToken);
+            CreateTimer(delay);
         }
     }
 
-    private static async Task SendRequestAsync(System.Timers.Timer timer, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
+    private static async Task SendRequestAsync(HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
     {
         try
         {
@@ -158,8 +166,7 @@ class Program
         finally
         {
             Interlocked.Increment(ref totalRequestCount);
-            CreateTimer(1000, client, url, host, readResponseBody, cancellationToken);
-            timer.Dispose();
+            CreateTimer(1000);
         }
     }
 
@@ -172,22 +179,27 @@ class Program
         Console.WriteLine("Keep secondSliceFactor as one, unless you want to divide a second into set number of slices and divide RPS spurts among them.");
     }
 
-    private static void CreateTimer(int delay, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
+    private static void CreateTimer(int delay)
     {
         // Create a timer with the delay
-        var timer = new System.Timers.Timer(delay);
+        var timer = new Timer(new TimerCallback(TimerProc));
+        timer.Change(delay, Timeout.Infinite);
+    }
 
-        // Set the timer to trigger only once
-        timer.AutoReset = false;
+    private static void TimerProc(object state)
+    {
+        var timer = (Timer)state;
+        _ = SendRequestAsync(_client, _url, _host, _readResponseBody, _cancellationToken);
+        timer.Dispose();
+    }
 
-        // Attach an event handler to the Elapsed event
-        timer.Elapsed += (sender, e) =>
-        {
-            // Send the request
-            _ = SendRequestAsync(timer, client, url, host, readResponseBody, cancellationToken);
-        };
-
-        // Start the timer
-        timer.Start();
+    class TimerData
+    {
+        public Timer timer { get; set; }
+        public HttpClient client { get; set; }
+        public string url { get; set; }
+        public string host { get; set; }
+        public int readResponseBody { get; set; }
+        public CancellationToken cancellationToken { get; set; }
     }
 }
