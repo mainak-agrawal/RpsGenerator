@@ -139,7 +139,7 @@ class Program
         }
     }
 
-    private static async Task SendRequestAsync(HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
+    private static async Task SendRequestAsync(Timer timer, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
     {
         try
         {
@@ -157,6 +157,7 @@ class Program
         catch (TaskCanceledException)
         {
             Interlocked.Increment(ref failedRequestCount);
+            timer.Dispose();
         }
         catch (Exception ex)
         {
@@ -166,7 +167,10 @@ class Program
         finally
         {
             Interlocked.Increment(ref totalRequestCount);
-            CreateTimer(1000);
+            if (timer != null)
+            {
+                timer.Change(1000, Timeout.Infinite);
+            }
         }
     }
 
@@ -189,8 +193,7 @@ class Program
     private static void TimerProc(object state)
     {
         var timer = (Timer)state;
-        _ = SendRequestAsync(_client, _url, _host, _readResponseBody, _cancellationToken);
-        timer.Dispose();
+        _ = SendRequestAsync(timer, _client, _url, _host, _readResponseBody, _cancellationToken);
     }
 
     class TimerData
