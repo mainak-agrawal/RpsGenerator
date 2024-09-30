@@ -9,6 +9,10 @@ class Program
 {
     private static long totalRequestCount = 0;
     private static long failedRequestCount = 0;
+    private static long count2xx = 0;
+    private static long count3xx = 0;
+    private static long count4xx = 0;
+    private static long count5xx = 0;
     private static Stopwatch timeTracker = new Stopwatch();
 
     static async Task Main(string[] args)
@@ -111,12 +115,20 @@ class Program
             timeTracker.Stop();
             var failedreq = Interlocked.Read(ref failedRequestCount);
             var totalreq = Interlocked.Read(ref totalRequestCount);
+            var status2xx = Interlocked.Read(ref count2xx);
+            var status3xx = Interlocked.Read(ref count3xx);
+            var status4xx = Interlocked.Read(ref count4xx);
+            var status5xx = Interlocked.Read(ref count5xx);
             var seconds = timeTracker.Elapsed.TotalSeconds;
             var effectiveRps = totalreq/seconds;
             Console.WriteLine($"Total requests sent: {totalreq}");
             Console.WriteLine($"Total time in seconds: {seconds}");
             Console.WriteLine($"Measured RPS: {effectiveRps}");
             Console.WriteLine($"Failed requests: {failedreq}");
+            Console.WriteLine($"2xx responses: {status2xx}");
+            Console.WriteLine($"3xx responses: {status3xx}");
+            Console.WriteLine($"4xx responses: {status4xx}");
+            Console.WriteLine($"5xx responses: {status5xx}");
         }
     }
 
@@ -137,18 +149,39 @@ class Program
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Host = host;
+            var responseStatusCode = 0;
             if (readResponseBody == 1)
             {
                 using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                responseStatusCode = (int)response.StatusCode;
             }
             else
             {
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                responseStatusCode = (int)response.StatusCode;
+            }
+
+            // Switch case to increment the correct counter based on the response status code
+            switch (responseStatusCode / 100)
+            {
+                case 2:
+                    Interlocked.Increment(ref count2xx);
+                    break;
+                case 3:
+                    Interlocked.Increment(ref count3xx);
+                    break;
+                case 4:
+                    Interlocked.Increment(ref count4xx);
+                    break;
+                case 5:
+                    Interlocked.Increment(ref count5xx);
+                    break;
             }
         }
         catch (TaskCanceledException)
         {
             Interlocked.Increment(ref failedRequestCount);
+            timer.Dispose();
         }
         catch (Exception ex)
         {
@@ -158,8 +191,11 @@ class Program
         finally
         {
             Interlocked.Increment(ref totalRequestCount);
-            CreateTimer(1000, client, url, host, readResponseBody, cancellationToken);
-            timer.Dispose();
+            if (timer != null)
+            {
+                timer.Interval = 1000;
+                timer.Start();
+            }
         }
     }
 
