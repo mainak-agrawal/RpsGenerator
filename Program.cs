@@ -31,7 +31,8 @@ class Program
         {
             e.Cancel = true; // Prevent the process from terminating immediately
             cancellationTokenSource.Cancel();    // Signal cancellation
-            Console.WriteLine("Cancellation requested. Stopping...");
+            Console.WriteLine("Cancellation requested. Stopping1...");
+            TimerFd.CloseAll();
         };
 
         if (args.Length != 8)
@@ -134,17 +135,12 @@ class Program
 
     private static void GenerateTimers(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, CancellationToken cancellationToken)
     {
-        for (int i = 0; i < requestsPerSecond; i++)
-        {
-            // Create a random number between 1 and 500
-            int delay = new Random().Next(1, 500);
-
-            CreateTimer(delay, client, url, host, readResponseBody, cancellationToken);
-        }
+        TimerFd.Init(client, url, host, requestsPerSecond, readResponseBody, cancellationToken);
     }
 
-    private static async Task SendRequestAsync(System.Timers.Timer timer, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
+    public static async Task SendRequestAsync(int timerFd, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
     {
+        int cancelled = 0;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -181,7 +177,7 @@ class Program
         catch (TaskCanceledException)
         {
             Interlocked.Increment(ref failedRequestCount);
-            timer.Dispose();
+            cancelled = 1;
         }
         catch (Exception ex)
         {
@@ -191,10 +187,10 @@ class Program
         finally
         {
             Interlocked.Increment(ref totalRequestCount);
-            if (timer != null)
+
+            if (cancelled == 0)
             {
-                timer.Interval = 1000;
-                timer.Start();
+                TimerFd.SetTimer(timerFd, 1);
             }
         }
     }
@@ -206,24 +202,5 @@ class Program
         Console.WriteLine("For putting no cap on maxConnections, set it to 0.");
         Console.WriteLine("Set readResponseBody as 1 or 0.");
         Console.WriteLine("Keep secondSliceFactor as one, unless you want to divide a second into set number of slices and divide RPS spurts among them.");
-    }
-
-    private static void CreateTimer(int delay, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
-    {
-        // Create a timer with the delay
-        var timer = new System.Timers.Timer(delay);
-
-        // Set the timer to trigger only once
-        timer.AutoReset = false;
-
-        // Attach an event handler to the Elapsed event
-        timer.Elapsed += (sender, e) =>
-        {
-            // Send the request
-            _ = SendRequestAsync(timer, client, url, host, readResponseBody, cancellationToken);
-        };
-
-        // Start the timer
-        timer.Start();
     }
 }
