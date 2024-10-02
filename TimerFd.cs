@@ -87,6 +87,7 @@ class TimerFd
         }
 
         // Step 2: Create 100 timerfds and add them to epoll
+        rps = 1;
         TimerFds = new int[rps];
         int j = 0;
         while (j < rps)
@@ -132,7 +133,7 @@ class TimerFd
                 it_interval = new Timespec
                 {
                     tv_sec = 0,  // One-shot timer, no interval
-                    tv_nsec = 0
+                    tv_nsec = 3 * 1000000  // 3 ms interval
                 }
             };
 

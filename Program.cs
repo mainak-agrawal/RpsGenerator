@@ -143,36 +143,40 @@ class Program
         int cancelled = 0;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Host = host;
-            var responseStatusCode = 0;
-            if (readResponseBody == 1)
+            if (cancellationToken.IsCancellationRequested)
             {
-                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-                responseStatusCode = (int)response.StatusCode;
+                throw new TaskCanceledException();
             }
-            else
-            {
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-                responseStatusCode = (int)response.StatusCode;
-            }
+            // using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // request.Headers.Host = host;
+            // var responseStatusCode = 0;
+            // if (readResponseBody == 1)
+            // {
+            //     using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            //     responseStatusCode = (int)response.StatusCode;
+            // }
+            // else
+            // {
+            //     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            //     responseStatusCode = (int)response.StatusCode;
+            // }
 
-            // Switch case to increment the correct counter based on the response status code
-            switch (responseStatusCode / 100)
-            {
-                case 2:
-                    Interlocked.Increment(ref count2xx);
-                    break;
-                case 3:
-                    Interlocked.Increment(ref count3xx);
-                    break;
-                case 4:
-                    Interlocked.Increment(ref count4xx);
-                    break;
-                case 5:
-                    Interlocked.Increment(ref count5xx);
-                    break;
-            }
+            // // Switch case to increment the correct counter based on the response status code
+            // switch (responseStatusCode / 100)
+            // {
+            //     case 2:
+            //         Interlocked.Increment(ref count2xx);
+            //         break;
+            //     case 3:
+            //         Interlocked.Increment(ref count3xx);
+            //         break;
+            //     case 4:
+            //         Interlocked.Increment(ref count4xx);
+            //         break;
+            //     case 5:
+            //         Interlocked.Increment(ref count5xx);
+            //         break;
+            // }
         }
         catch (TaskCanceledException)
         {
@@ -190,7 +194,7 @@ class Program
 
             if (cancelled == 0)
             {
-                TimerFd.SetTimer(timerFd, 1);
+                // TimerFd.SetTimer(timerFd, 1);
             }
         }
     }
