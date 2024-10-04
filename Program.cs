@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Timers;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Net;
 
 class Program
 {
@@ -135,7 +136,9 @@ class Program
 
     private static void GenerateTimers(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, CancellationToken cancellationToken)
     {
-        TimerFd.Init(client, url, host, requestsPerSecond, readResponseBody, cancellationToken);
+        TimerFd.Init(client, url, host, requestsPerSecond, readResponseBody, 20, cancellationToken);
+        // Start System.Timers.Timer with 10ms interval
+        // StartCsharpTimer(10);
     }
 
     public static async Task SendRequestAsync(int timerFd, HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
@@ -143,40 +146,36 @@ class Program
         int cancelled = 0;
         try
         {
-            if (cancellationToken.IsCancellationRequested)
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Host = host;
+            var responseStatusCode = 0;
+            if (readResponseBody == 1)
             {
-                throw new TaskCanceledException();
+                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                responseStatusCode = (int)response.StatusCode;
             }
-            // using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            // request.Headers.Host = host;
-            // var responseStatusCode = 0;
-            // if (readResponseBody == 1)
-            // {
-            //     using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            //     responseStatusCode = (int)response.StatusCode;
-            // }
-            // else
-            // {
-            //     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            //     responseStatusCode = (int)response.StatusCode;
-            // }
+            else
+            {
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                responseStatusCode = (int)response.StatusCode;
+            }
 
-            // // Switch case to increment the correct counter based on the response status code
-            // switch (responseStatusCode / 100)
-            // {
-            //     case 2:
-            //         Interlocked.Increment(ref count2xx);
-            //         break;
-            //     case 3:
-            //         Interlocked.Increment(ref count3xx);
-            //         break;
-            //     case 4:
-            //         Interlocked.Increment(ref count4xx);
-            //         break;
-            //     case 5:
-            //         Interlocked.Increment(ref count5xx);
-            //         break;
-            // }
+            // Switch case to increment the correct counter based on the response status code
+            switch (responseStatusCode / 100)
+            {
+                case 2:
+                    Interlocked.Increment(ref count2xx);
+                    break;
+                case 3:
+                    Interlocked.Increment(ref count3xx);
+                    break;
+                case 4:
+                    Interlocked.Increment(ref count4xx);
+                    break;
+                case 5:
+                    Interlocked.Increment(ref count5xx);
+                    break;
+            }
         }
         catch (TaskCanceledException)
         {
@@ -194,7 +193,7 @@ class Program
 
             if (cancelled == 0)
             {
-                // TimerFd.SetTimer(timerFd, 1);
+                TimerFd.SetTimer(timerFd, 1);
             }
         }
     }
@@ -206,5 +205,18 @@ class Program
         Console.WriteLine("For putting no cap on maxConnections, set it to 0.");
         Console.WriteLine("Set readResponseBody as 1 or 0.");
         Console.WriteLine("Keep secondSliceFactor as one, unless you want to divide a second into set number of slices and divide RPS spurts among them.");
+    }
+
+    private static void TimerElapsed()
+    {
+        Console.WriteLine("Timer elapsed!");
+    }
+
+    private static void StartCsharpTimer(double milliseconds)
+    {
+        var timer = new System.Timers.Timer(milliseconds);
+        timer.Elapsed += (sender, e) => TimerElapsed();
+        timer.AutoReset = true;
+        timer.Enabled = true;
     }
 }

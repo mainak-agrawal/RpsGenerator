@@ -70,7 +70,7 @@ class TimerFd
     [DllImport("libc.so.6", SetLastError = true)]
     private static extern int epoll_wait(int epfd, [In, Out] EpollEvent[] events, int maxevents, int timeout);
 
-    public static void Init(HttpClient client, string url, string host, int rps, int readResponseBody, CancellationToken cancellationToken)
+    public static void Init(HttpClient client, string url, string host, int rps, int readResponseBody, int timerInterval, CancellationToken cancellationToken)
     {
         Random rand = new Random();
 
@@ -87,7 +87,6 @@ class TimerFd
         }
 
         // Step 2: Create 100 timerfds and add them to epoll
-        rps = 1;
         TimerFds = new int[rps];
         int j = 0;
         while (j < rps)
@@ -133,7 +132,7 @@ class TimerFd
                 it_interval = new Timespec
                 {
                     tv_sec = 0,  // One-shot timer, no interval
-                    tv_nsec = 3 * 1000000  // 3 ms interval
+                    tv_nsec = 0  // ms interval
                 }
             };
 
@@ -186,22 +185,23 @@ class TimerFd
                     continue;
                 }
 
-                Console.WriteLine($"Reading Timer Fd {timerFd}...");
+                // Console.WriteLine($"Reading Timer Fd {timerFd}...");
 
                 // Step 4: Read from the timerfd to acknowledge the event
                 long result = read(timerFd, buffer, 8);
 
                 if (result == -1)
                 {
-                    Console.WriteLine($"Failed to read timer {events[i].fd}");
+                    Console.WriteLine($"Failed to read timer {timerFd}");
                 }
                 else
                 {
                     // The read buffer will hold the number of expirations
                     ulong expirations = BitConverter.ToUInt64(buffer, 0);
-                    Console.WriteLine($"Timer {events[i].fd} expired {expirations} time(s)");
-                    _ = Program.SendRequestAsync(timerFd, client, url, host, readResponseBody, cancellationToken);
-                    Console.WriteLine("Sent request");
+                    Console.WriteLine($"Timer {timerFd} expired {expirations} time(s)");
+                    SetTimer(timerFd, 1);
+                    // _ = Program.SendRequestAsync(timerFd, client, url, host, readResponseBody, cancellationToken);
+                    // Console.WriteLine("Sent request");
                 }
             }
         }
