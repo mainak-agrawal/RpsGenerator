@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -130,7 +131,8 @@ class Program
 
             for (int i = 0; i < requestsInIteration; i++)
             {
-                _ = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
+                // _ = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
+                _ = ResolveAsync(host, cancellationToken);
                 count += 1;
             }
 
@@ -173,6 +175,31 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine($"Request failed: {ex.Message}: {ex.InnerException}");
+            Interlocked.Increment(ref failedRequestCount);
+        }
+        finally
+        {
+            Interlocked.Increment(ref totalRequestCount);
+        }
+    }
+
+    private static async Task ResolveAsync(string host, CancellationToken cancellationToken)
+    {
+        try {
+            var ipAddresses = await Dns.GetHostAddressesAsync(host, cancellationToken).ConfigureAwait(false);
+            if (ipAddresses.Length == 0)
+            {
+                Console.WriteLine($"Failed to resolve host {host}");
+                Interlocked.Increment(ref failedRequestCount);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            Interlocked.Increment(ref failedRequestCount);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Query failed: {ex.Message}: {ex.InnerException}");
             Interlocked.Increment(ref failedRequestCount);
         }
         finally
