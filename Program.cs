@@ -10,6 +10,8 @@ class Program
     private static long totalRequestCount = 0;
     private static long failedRequestCount = 0;
     private static Stopwatch timeTracker = new Stopwatch();
+    private static PriorityQueue<string, long> taskQueue = new PriorityQueue<string, long>();
+    private const long timerGranularityTicks = 1000000; // 100ms
 
     static async Task Main(string[] args)
     {
@@ -44,14 +46,6 @@ class Program
         int durationInSeconds = int.Parse(args[5]);
         int readResponseBody = int.Parse(args[6]);
         int sliceFactor = int.Parse(args[7]);
-        // string urls = "http://52.140.106.224:80";
-        // string hosts = "india-backend.azurewebsites.net";
-        // int requestsPerSecond = 300;
-        // int maxConnections = 100;
-        // int timeoutInSeconds = 10;
-        // int durationInSeconds = 30;
-        // int readResponseBody = 0;
-        // int sliceFactor = 1;
 
         var urllist = urls.Split(',');
         var hostlist = hosts.Split(',');
@@ -67,9 +61,8 @@ class Program
         {
             handler = new SocketsHttpHandler
             {
-                MaxConnectionsPerServer = maxConnections,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(30),
-                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+                PooledConnectionLifetime = TimeSpan.FromSeconds(2),
+                PooledConnectionIdleTimeout = TimeSpan.FromSeconds(2),
                 UseCookies = false,
             };
         }
@@ -87,70 +80,87 @@ class Program
 
         Console.WriteLine($"Starting RPS generator with {requestsPerSecond} requests per second for {durationInSeconds} seconds...");
 
-        Task rpsTask = GenerateRequestsAsync(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
         cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(durationInSeconds));
-
         timeTracker.Start();
-
-        // for (int i = 0; i < urllist.Length; i++)
-        // {
-        //     rpsTask = GenerateRequestsAsync(client, urllist[i], hostlist[i], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
-        // }
-
-        try
-        {
-            await rpsTask;
-        }
-        catch (Exception)
-        {
-            Console.WriteLine("Stopped!");
-        }
-        finally
-        {
-            timeTracker.Stop();
-            var failedreq = Interlocked.Read(ref failedRequestCount);
-            var totalreq = Interlocked.Read(ref totalRequestCount);
-            var seconds = timeTracker.Elapsed.TotalSeconds;
-            var effectiveRps = totalreq/seconds;
-            Console.WriteLine($"Total requests sent: {totalreq}");
-            Console.WriteLine($"Total time in seconds: {seconds}");
-            Console.WriteLine($"Measured RPS: {effectiveRps}");
-            Console.WriteLine($"Failed requests: {failedreq}");
-        }
+        await GenerateRequestsAsync(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, cancellationTokenSource.Token);
     }
 
-    private static async Task GenerateRequestsAsync(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, CancellationToken cancellationToken)
+    private static async Task GenerateRequestsAsync(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, CancellationToken cancellationToken)
     {
-        var stopwatch = new Stopwatch();
-
-        while (!cancellationToken.IsCancellationRequested)
+        for (int i = 0; i < requestsPerSecond; i++)
         {
-            stopwatch.Start();
-            var requestsInIteration = requestsPerSecond/sliceFactor;
-            int count = 0;
+            EnqueueNext(host, DateTime.UtcNow.Ticks);
+        }
 
-            for (int i = 0; i < requestsInIteration; i++)
+        var tasks = new List<Task>();
+        var delayTask = Task.Delay(1, cancellationToken);
+        var expectedNext = DateTime.UtcNow.Ticks + 10000;
+        tasks.Add(delayTask);
+
+        while (!cancellationToken.IsCancellationRequested && tasks.Count > 0)
+        {
+            Task completedTask = await Task.WhenAny(tasks).ConfigureAwait(false);
+
+            if (cancellationToken.IsCancellationRequested)
             {
-                // _ = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
-                _ = ResolveAsync(host, cancellationToken);
-                count += 1;
+                break;
             }
 
-            stopwatch.Stop();
-            Console.WriteLine($"Fired {count} requests to host {host} at {url} in {stopwatch.ElapsedMilliseconds} ms");
-            int delayTime = (int)1000/sliceFactor - (int)stopwatch.ElapsedMilliseconds;
-            if (delayTime > 0)
+            // Check if the returned task is the delay task
+            if (completedTask == delayTask)
             {
-                await Task.Delay(delayTime).ConfigureAwait(false);;
+                tasks.Remove(delayTask);
+                long priority = 0;
+                string curHost = string.Empty;
+                while (taskQueue.TryPeek(out curHost, out priority))
+                {
+                    if (priority <= DateTime.UtcNow.Ticks)
+                    {
+                        taskQueue.Dequeue();
+                        tasks.Add(SendRequestAsync(client, url, curHost, readResponseBody, cancellationToken));
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                priority = 0;
+                long nextDelay;
+                if (taskQueue.TryPeek(out curHost, out priority))
+                {
+                    nextDelay = priority - DateTime.UtcNow.Ticks;
+                    if (nextDelay < timerGranularityTicks)
+                    {
+                        nextDelay = timerGranularityTicks - 10000; // -1ms
+                    }
+                    nextDelay = nextDelay + 10000; // nextDelay + 1ms
+                    delayTask = Task.Delay(TimeSpan.FromTicks(nextDelay), cancellationToken);
+                    tasks.Add(delayTask);
+                    expectedNext = DateTime.UtcNow.Ticks + nextDelay;
+                }
+                else
+                {
+                    expectedNext = DateTime.MaxValue.Ticks;
+                }
             }
             else
             {
-                Console.WriteLine("Requests took longer than expected. Skipping delay.");
+                tasks.Remove(completedTask);
+                var intervalTicks = 100000000; // 10 second
+                EnqueueNext(host, DateTime.UtcNow.Ticks + intervalTicks);
+                var remainingDelay = expectedNext - DateTime.UtcNow.Ticks;
+                if (intervalTicks < remainingDelay)
+                {
+                    tasks.Remove(delayTask);
+                    delayTask = Task.Delay(TimeSpan.FromTicks(intervalTicks), cancellationToken);
+                    tasks.Add(delayTask);
+                    expectedNext = DateTime.UtcNow.Ticks + intervalTicks;
+                }
             }
-            stopwatch.Reset();
         }
 
-        throw new OperationCanceledException();
+        PrintStats();
     }
 
     private static async Task SendRequestAsync(HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
@@ -208,6 +218,11 @@ class Program
         }
     }
 
+    private static void EnqueueNext(string host, long time)
+    {
+        taskQueue.Enqueue(host, time);
+    }
+
     private static void PrintInstructions()
     {
         Console.WriteLine("Usage: RpsGenerator <urls> <hosts> <requestsPerSecond> <maxConnections> <timeoutInSeconds> <durationInSeconds> <readResponseBody> <secondSliceFactor>");
@@ -215,5 +230,18 @@ class Program
         Console.WriteLine("For putting no cap on maxConnections, set it to 0.");
         Console.WriteLine("Set readResponseBody as 1 or 0.");
         Console.WriteLine("Keep secondSliceFactor as one, unless you want to divide a second into set number of slices and divide RPS spurts among them.");
+    }
+
+    private static void PrintStats()
+    {
+        timeTracker.Stop();
+        var failedreq = Interlocked.Read(ref failedRequestCount);
+        var totalreq = Interlocked.Read(ref totalRequestCount);
+        var seconds = timeTracker.Elapsed.TotalSeconds;
+        var effectiveRps = totalreq/seconds;
+        Console.WriteLine($"Total requests sent: {totalreq}");
+        Console.WriteLine($"Total time in seconds: {seconds}");
+        Console.WriteLine($"Measured RPS: {effectiveRps}");
+        Console.WriteLine($"Failed requests: {failedreq}");
     }
 }
