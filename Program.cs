@@ -2,13 +2,15 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
 class Program
 {
-    private static long totalRequestCount = 0;
-    private static long failedRequestCount = 0;
+    public static long totalRequestCount = 0;
+    public static long failedRequestCount = 0;
+    public static int randomPrefix = new Random().Next(1000);
     private static Stopwatch timeTracker = new Stopwatch();
 
     static async Task Main(string[] args)
@@ -30,7 +32,7 @@ class Program
             Console.WriteLine("Cancellation requested. Stopping...");
         };
 
-        if (args.Length != 8)
+        if (args.Length != 9)
         {
             PrintInstructions();
             return;
@@ -44,6 +46,7 @@ class Program
         int durationInSeconds = int.Parse(args[5]);
         int readResponseBody = int.Parse(args[6]);
         int sliceFactor = int.Parse(args[7]);
+        int dnsMechanism = int.Parse(args[8]);
         // string urls = "http://52.140.106.224:80";
         // string hosts = "india-backend.azurewebsites.net";
         // int requestsPerSecond = 300;
@@ -83,11 +86,16 @@ class Program
             };
         }
 
+        if (dnsMechanism == 0)
+        {
+            DnsResolver.LibraryInit();
+        }
+
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutInSeconds) };
 
         Console.WriteLine($"Starting RPS generator with {requestsPerSecond} requests per second for {durationInSeconds} seconds...");
 
-        Task rpsTask = GenerateRequestsAsync(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, cancellationTokenSource.Token);
+        Task rpsTask = GenerateRequestsAsync(client, urllist[0], hostlist[0], requestsPerSecond, readResponseBody, sliceFactor, dnsMechanism, cancellationTokenSource.Token);
         cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(durationInSeconds));
 
         timeTracker.Start();
@@ -101,8 +109,11 @@ class Program
         {
             await rpsTask;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Console.WriteLine($"Exception: {ex.Message}");
+            Console.WriteLine($"InnerException: {ex.InnerException}");
+            Console.WriteLine($"StackTrace: {ex.StackTrace}");
             Console.WriteLine("Stopped!");
         }
         finally
@@ -119,25 +130,37 @@ class Program
         }
     }
 
-    private static async Task GenerateRequestsAsync(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, CancellationToken cancellationToken)
+    private static async Task GenerateRequestsAsync(HttpClient client, string url, string host, int requestsPerSecond, int readResponseBody, int sliceFactor, int dnsMechanism, CancellationToken cancellationToken)
     {
+        if (dnsMechanism == 0)
+        {
+            DnsResolver.Initialize(cancellationToken);
+        }
+
+        int cur = 0;
+
         var stopwatch = new Stopwatch();
 
         while (!cancellationToken.IsCancellationRequested)
         {
             stopwatch.Start();
             var requestsInIteration = requestsPerSecond/sliceFactor;
-            int count = 0;
 
-            for (int i = 0; i < requestsInIteration; i++)
+            if (dnsMechanism == 0)
             {
-                // _ = SendRequestAsync(client, url, host, readResponseBody, cancellationToken);
-                _ = ResolveAsync(host, cancellationToken);
-                count += 1;
+                DnsResolver.Run(requestsPerSecond, cur);
+            }
+            else
+            {
+                for (int i = 0; i < requestsInIteration; i++)
+                {
+                    _ = ResolveAsync(cur + i, cancellationToken);
+                }
             }
 
             stopwatch.Stop();
-            Console.WriteLine($"Fired {count} requests to host {host} at {url} in {stopwatch.ElapsedMilliseconds} ms");
+            Console.WriteLine($"Fired {requestsPerSecond} dns queries in {stopwatch.ElapsedMilliseconds} ms");
+            cur += requestsPerSecond;
             int delayTime = (int)1000/sliceFactor - (int)stopwatch.ElapsedMilliseconds;
             if (delayTime > 0)
             {
@@ -150,7 +173,10 @@ class Program
             stopwatch.Reset();
         }
 
-        throw new OperationCanceledException();
+        if (dnsMechanism == 0)
+        {
+            DnsResolver.Cleanup();
+        }
     }
 
     private static async Task SendRequestAsync(HttpClient client, string url, string host, int readResponseBody, CancellationToken cancellationToken)
@@ -183,10 +209,19 @@ class Program
         }
     }
 
-    private static async Task ResolveAsync(string host, CancellationToken cancellationToken)
+    private static async Task ResolveAsync(int total, CancellationToken cancellationToken)
     {
         try {
+            string host = randomPrefix.ToString() + total.ToString() + ".com";
+            //var watch = new Stopwatch();
+            //watch.Start();
             var ipAddresses = await Dns.GetHostAddressesAsync(host, cancellationToken).ConfigureAwait(false);
+            //watch.Stop();
+            // if (watch.ElapsedMilliseconds >= 1000)
+            // {
+            //     Console.WriteLine($"Resolution of host {host} took {watch.ElapsedMilliseconds} ms");
+            // }
+
             if (ipAddresses.Length == 0)
             {
                 Console.WriteLine($"Failed to resolve host {host}");

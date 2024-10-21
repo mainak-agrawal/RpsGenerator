@@ -5,7 +5,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ThreadPoolMaxThreads>1</ThreadPoolMaxThreads> 
+    <ThreadPoolMaxThreads>100</ThreadPoolMaxThreads>
   </PropertyGroup>
 
 </Project>
